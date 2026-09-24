@@ -1,0 +1,844 @@
+:root {
+  --bg: #f5f7f6;
+  --card: #ffffff;
+  --primary: #1a7a4c;
+  --primary-dark: #145c39;
+  --text: #1c2320;
+  --muted: #667169;
+  --border: #dfe6e1;
+  --danger: #c1443a;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  text-decoration: underline;
+  padding: 0;
+}
+
+.button {
+  display: inline-block;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 600;
+  text-decoration: none;
+  text-align: center;
+}
+
+.button:hover {
+  background: var(--primary-dark);
+}
+
+.button.danger {
+  background: var(--danger);
+}
+
+.button.secondary {
+  background: white;
+  color: var(--primary-dark);
+  border: 1px solid var(--primary);
+}
+
+.button.secondary:hover {
+  background: #eef7f1;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.hint {
+  color: var(--primary-dark);
+  font-size: 0.85rem;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* ── Auth ─────────────────────────────────────────────────────────── */
+
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.auth-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 32px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+}
+
+.auth-card h1 {
+  margin: 0;
+  color: var(--primary-dark);
+}
+
+.auth-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.auth-card label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.auth-card input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.auth-card button[type="submit"] {
+  margin-top: 16px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: 600;
+}
+
+.auth-card button[type="submit"]:disabled {
+  opacity: 0.6;
+}
+
+.role-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.role-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.role-option:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: #eef7f1;
+}
+
+.role-option:disabled {
+  opacity: 0.6;
+}
+
+.role-option strong {
+  color: var(--primary-dark);
+}
+
+.role-option span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.role-option em {
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-style: normal;
+}
+
+/* ── Dashboard ────────────────────────────────────────────────────── */
+
+.dashboard {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.dashboard-header h1 {
+  margin: 0;
+  color: var(--primary-dark);
+}
+
+.role-badge {
+  background: var(--primary);
+  color: white;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.appointment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.appointment-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+
+.empty {
+  color: var(--muted);
+}
+
+.role-intro {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.role-intro h2 {
+  margin: 0;
+  color: var(--primary-dark);
+}
+
+.action-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── Generic sub-pages (register / book / admin) ─────────────────────── */
+
+.page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.page-header h2 {
+  margin: 0;
+  color: var(--primary-dark);
+}
+
+.form-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-card h3 {
+  margin: 0 0 8px;
+  color: var(--primary-dark);
+}
+
+.form-card label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+.form-card input,
+.form-card select {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.form-card button {
+  margin-top: 18px;
+}
+
+.page-wide {
+  max-width: 900px;
+}
+
+.admin-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .admin-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ── Appointment room ─────────────────────────────────────────────── */
+
+.room {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100vh;
+}
+
+.room-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.room-header h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.status-pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+  background: var(--border);
+}
+
+.status-in-call {
+  background: #d3f0df;
+  color: var(--primary-dark);
+}
+
+.status-ended {
+  background: #f3d9d6;
+  color: var(--danger);
+}
+
+.call-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.chat-panel {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  overflow: hidden;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg {
+  align-self: flex-start;
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 8px 12px;
+  max-width: 80%;
+}
+
+.msg.mine {
+  align-self: flex-end;
+  background: var(--primary);
+  color: white;
+}
+
+.msg time {
+  display: block;
+  font-size: 0.7rem;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.chat-form {
+  display: flex;
+  border-top: 1px solid var(--border);
+}
+
+.chat-form input {
+  flex: 1;
+  border: none;
+  padding: 12px;
+}
+
+.chat-form input:focus {
+  outline: none;
+}
+
+.chat-form button {
+  border: none;
+  background: var(--primary);
+  color: white;
+  padding: 0 20px;
+  font-weight: 600;
+}
+
+/* ── Clinical panel ───────────────────────────────────────────────── */
+
+.clinical-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.clinical-panel h3 {
+  margin: 0 0 12px;
+  color: var(--primary-dark);
+}
+
+.clinical-panel h4 {
+  margin: 16px 0 4px;
+  color: var(--primary-dark);
+}
+
+.clinical-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clinical-form label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.clinical-form input,
+.clinical-form textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+.vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.triage-result {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.triage-result.urgent {
+  background: #fbe9e7;
+}
+
+.flag {
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+.flag-red {
+  background: #f8d7d3;
+  color: #8a231b;
+}
+
+.flag-orange {
+  background: #fde6cc;
+  color: #8a4b04;
+}
+
+.flag-yellow {
+  background: #fcf2c8;
+  color: #7a6206;
+}
+
+.encounter-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* ── Patient record timeline ──────────────────────────────────────── */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.timeline-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.timeline-date {
+  font-weight: 600;
+  color: var(--primary-dark);
+  margin-bottom: 6px;
+}
+
+.vitals-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.prescription {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.prescription ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+/* ── Store & forward queue ────────────────────────────────────────── */
+
+.sf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sf-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sf-payload {
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.sf-card textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+/* ── App shell / persistent nav ───────────────────────────────────── */
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 20px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--primary-dark);
+  text-decoration: none;
+}
+
+.topnav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.topnav-link {
+  color: var(--text);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.topnav-link:hover {
+  background: var(--bg);
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-main {
+  flex: 1;
+  width: 100%;
+}
+
+.app-main-wide {
+  max-width: none;
+}
+
+/* ── Dashboard filters ─────────────────────────────────────────────── */
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.filter-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  text-transform: capitalize;
+  color: var(--muted);
+}
+
+.filter-chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+/* ── Admin directory tables ───────────────────────────────────────── */
+
+.directory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.directory-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+/* ── Audit log ─────────────────────────────────────────────────────── */
+
+.audit-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audit-row {
+  display: grid;
+  grid-template-columns: 180px 100px 1fr;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  align-items: center;
+}
+
+.audit-time {
+  color: var(--muted);
+}
+
+.audit-action {
+  text-transform: uppercase;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  width: fit-content;
+}
+
+.audit-create {
+  color: var(--primary-dark);
+  background: #d3f0df;
+}
+
+.audit-login {
+  color: #1a5a8f;
+  background: #d6e8f7;
+}
+
+.audit-update {
+  color: #8a4b04;
+  background: #fde6cc;
+}
+
+/* ── Video call stage ─────────────────────────────────────────────── */
+
+.video-stage {
+  position: relative;
+  width: 100%;
+  background: #111;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-stage video {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+}
+
+.video-stage video.hidden {
+  display: none;
+}
+
+.audio-only-hint {
+  color: #cbd5cf;
+  font-size: 0.85rem;
+  padding: 24px;
+}
+
+.local-video {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 90px;
+  border-radius: 8px;
+  border: 2px solid white;
+  max-height: 90px !important;
+}
+
+.call-controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .topbar-user {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .audit-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

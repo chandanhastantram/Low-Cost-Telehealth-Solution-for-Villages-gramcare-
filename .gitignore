@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+*.env
+backend/.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# DB
+*.db
+*.sqlite
+
+# Node (frontend, later)
+node_modules/
+.next/
+dist/
+
+# MinIO / S3
+.minio/
+
+# Alembic
+alembic/versions/*.py
+!alembic/versions/.gitkeep
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Scratch / temp
+check_imports.py
+paper_text.txt
+*.txt.bak

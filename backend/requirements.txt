@@ -1,0 +1,48 @@
+# Core
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.8.2
+pydantic-settings==2.4.0
+python-dotenv==1.0.1
+
+# Database
+sqlalchemy==2.0.35
+asyncpg==0.29.0
+alembic==1.13.2
+psycopg2-binary==2.9.9
+
+# Redis
+redis==5.0.8
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.12
+
+# Real-time: WebRTC call signaling + chat (no paid SFU/SaaS — see app/realtime)
+python-socketio==5.11.4
+
+# Object Storage (MinIO / S3 — self-hosted, free)
+boto3==1.35.16
+aioboto3==13.1.1
+
+# Utilities
+httpx==0.27.2
+orjson==3.10.7
+python-slugify==8.0.4
+phonenumbers==8.13.44
+Pillow==10.4.0
+
+# Background tasks & scheduling
+celery==5.4.0
+kombu==5.3.4
+
+# Logging & monitoring
+structlog==24.4.0
+
+# Testing
+pytest==8.3.2
+pytest-asyncio==0.23.8
+httpx==0.27.2
+factory-boy==3.3.1
