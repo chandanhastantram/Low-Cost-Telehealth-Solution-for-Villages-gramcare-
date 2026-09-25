@@ -234,4 +234,4 @@ pytest tests/ -v
 
 The backend stores `language_code` per user (e.g., `en`, `hi`, `kn`).
 The frontend uses this to serve the correct i18n resource file.
-Prescription instructions are designed to be read aloud in the local language.
+Prescription instructions are designed to be read aloud in the local language. 
