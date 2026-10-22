@@ -17,10 +17,13 @@ self-hosted, open-source coturn TURN server is needed as a fallback for
 strict NATs.
 """
 
+import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,19 +47,46 @@ from app.schemas.schemas import (
 )
 from app.utils.audit import log_action
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/teleconsult", tags=["Teleconsultation"])
 
 
-def _ice_servers() -> list[dict]:
+_turn_cache: dict = {"servers": [], "expires": 0.0}
+
+
+async def _hosted_turn_servers() -> list[dict]:
+    """Short-lived TURN credentials from TURN_CREDENTIALS_URL, cached briefly."""
+    if not settings.TURN_CREDENTIALS_URL:
+        return []
+    now = time.monotonic()
+    if _turn_cache["expires"] > now:
+        return _turn_cache["servers"]
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            res = await client.get(settings.TURN_CREDENTIALS_URL)
+            res.raise_for_status()
+            data = res.json()
+        servers = data.get("iceServers", data) if isinstance(data, dict) else data
+        servers = [s for s in servers if isinstance(s, dict) and s.get("urls")]
+        _turn_cache.update(servers=servers, expires=now + 600)
+        return servers
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"TURN credential fetch failed, calls fall back to STUN: {e}")
+        return _turn_cache["servers"]
+
+
+async def _ice_servers() -> list[dict]:
     servers = [{"urls": settings.stun_urls}]
-    if settings.TURN_ENABLED:
+    if settings.TURN_ENABLED and settings.turn_urls:
         servers.append(
             {
-                "urls": [settings.TURN_URL],
+                "urls": settings.turn_urls,
                 "username": settings.TURN_USERNAME,
                 "credential": settings.TURN_CREDENTIAL,
             }
         )
+    servers.extend(await _hosted_turn_servers())
     return servers
 
 
@@ -83,13 +113,13 @@ async def get_call_room(
     await log_action(db, current_user.id, "read", "teleconsult_room", str(body.appointment_id))
     await db.commit()
 
-    return CallRoomResponse(room_name=appt.call_room_name, ice_servers=_ice_servers())
+    return CallRoomResponse(room_name=appt.call_room_name, ice_servers=await _ice_servers())
 
 
 @router.get("/ice-servers")
 async def get_ice_servers(current_user: CurrentUser):
     """Return TURN/STUN ICE server configuration."""
-    return {"ice_servers": _ice_servers()}
+    return {"ice_servers": await _ice_servers()}
 
 
 # ── Store-and-Forward ─────────────────────────────────────────────────────────

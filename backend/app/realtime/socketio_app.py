@@ -6,7 +6,7 @@ separate signaling service or SFU is needed —
 
   • Call signaling (peer-to-peer WebRTC, audio-first):
       client -> "call:join"   {appointment_id}
-      client -> "call:signal" {appointment_id, data}   # relayed verbatim
+      client -> "call:signal" {appointment_id, data}   # relayed verbatim (+ "from")
       client -> "call:leave"  {appointment_id}
     The server never inspects the SDP/ICE payload; it just relays it to the
     other participant in the same appointment room. Media then flows
@@ -82,6 +82,9 @@ async def _can_access_appointment(user: User, appointment_id: str) -> bool:
 
 
 # ── Connection lifecycle ───────────────────────────────────────────────────
+#
+# Rural links drop constantly, so clients reconnect and simply re-send
+# call:join / chat:join; every handler here is safe to repeat.
 
 @sio.event
 async def connect(sid: str, environ: dict, auth: Optional[dict] = None):
@@ -92,29 +95,48 @@ async def connect(sid: str, environ: dict, auth: Optional[dict] = None):
 
 
 @sio.event
-async def disconnect(sid: str):
-    # socket.io removes the sid from all rooms automatically; nothing to persist.
-    pass
+async def disconnect(sid: str, *args):
+    # Tell call peers this side dropped (it may come back) rather than left.
+    session = await sio.get_session(sid)
+    for room in sio.rooms(sid):
+        if room.startswith("call:"):
+            await sio.emit(
+                "call:peer-offline",
+                {"appointment_id": room.split(":", 1)[1], "from": session.get("user_id")},
+                room=room,
+                skip_sid=sid,
+            )
+
+
+def _peers_in(room: str, sid: str) -> int:
+    return sum(1 for other, _ in sio.manager.get_participants("/", room) if other != sid)
 
 
 # ── Call signaling ─────────────────────────────────────────────────────────
 
 @sio.on("call:join")
 async def call_join(sid: str, data: dict):
+    """Ack: {"ok": bool, "peers": int} — peers already waiting in the call."""
     session = await sio.get_session(sid)
     appointment_id = str(data.get("appointment_id", ""))
     user = await _load_user(session)
     if not user or not await _can_access_appointment(user, appointment_id):
         await sio.emit("call:error", {"message": "Not authorized for this appointment."}, to=sid)
-        return
+        return {"ok": False, "peers": 0}
     room = _call_room(appointment_id)
     await sio.enter_room(sid, room)
-    await sio.emit("call:peer-joined", {"appointment_id": appointment_id}, room=room, skip_sid=sid)
+    await sio.emit(
+        "call:peer-joined",
+        {"appointment_id": appointment_id, "from": session["user_id"]},
+        room=room,
+        skip_sid=sid,
+    )
+    return {"ok": True, "peers": _peers_in(room, sid)}
 
 
 @sio.on("call:signal")
 async def call_signal(sid: str, data: dict):
-    """Relay an SDP offer/answer or ICE candidate to the other peer verbatim."""
+    """Relay an SDP description or ICE candidate to the other peer verbatim."""
     appointment_id = str(data.get("appointment_id", ""))
     payload: Any = data.get("data")
     room = _call_room(appointment_id)
@@ -123,9 +145,10 @@ async def call_signal(sid: str, data: dict):
     if room not in sio.rooms(sid):
         await sio.emit("call:error", {"message": "Join the call before signaling."}, to=sid)
         return
+    session = await sio.get_session(sid)
     await sio.emit(
         "call:signal",
-        {"appointment_id": appointment_id, "data": payload},
+        {"appointment_id": appointment_id, "data": payload, "from": session["user_id"]},
         room=room,
         skip_sid=sid,
     )
@@ -150,49 +173,58 @@ async def chat_join(sid: str, data: dict):
     user = await _load_user(session)
     if not user or not await _can_access_appointment(user, appointment_id):
         await sio.emit("chat:error", {"message": "Not authorized for this appointment."}, to=sid)
-        return
+        return {"ok": False}
     await sio.enter_room(sid, _chat_room(appointment_id))
+    return {"ok": True}
+
+
+@sio.on("chat:typing")
+async def chat_typing(sid: str, data: dict):
+    appointment_id = str(data.get("appointment_id", ""))
+    room = _chat_room(appointment_id)
+    if room not in sio.rooms(sid):
+        return
+    session = await sio.get_session(sid)
+    await sio.emit(
+        "chat:typing",
+        {"appointment_id": appointment_id, "from": session["user_id"], "typing": bool(data.get("typing"))},
+        room=room,
+        skip_sid=sid,
+    )
 
 
 @sio.on("chat:message")
 async def chat_message(sid: str, data: dict):
+    """
+    Persist and broadcast. Ack: {"ok": True, "message": {...}} so the sender
+    can mark it delivered; re-sending the same idempotency_key after a
+    reconnect returns the stored message instead of a duplicate.
+    """
     session = await sio.get_session(sid)
     user = await _load_user(session)
     if not user:
-        await sio.emit("chat:error", {"message": "Not authenticated."}, to=sid)
-        return
+        return {"ok": False, "error": "Not authenticated."}
 
     appointment_id = str(data.get("appointment_id", ""))
     body = (data.get("body") or "").strip()
-    idempotency_key = data.get("idempotency_key")
+    idempotency_key = data.get("idempotency_key") or None
     if not body or not await _can_access_appointment(user, appointment_id):
-        await sio.emit("chat:error", {"message": "Invalid message or not authorized."}, to=sid)
-        return
+        return {"ok": False, "error": "Invalid message or not authorized."}
 
     async with AsyncSessionLocal() as db:
+        message = None
         if idempotency_key:
-            existing = (
+            message = (
                 await db.execute(
                     select(ChatMessage).where(ChatMessage.idempotency_key == idempotency_key)
                 )
             ).scalar_one_or_none()
-            if existing:
-                message = existing
-            else:
-                message = ChatMessage(
-                    appointment_id=uuid.UUID(appointment_id),
-                    sender_id=user.id,
-                    body=body[:4000],
-                    idempotency_key=idempotency_key,
-                )
-                db.add(message)
-                await db.commit()
-                await db.refresh(message)
-        else:
+        if message is None:
             message = ChatMessage(
                 appointment_id=uuid.UUID(appointment_id),
                 sender_id=user.id,
                 body=body[:4000],
+                idempotency_key=idempotency_key,
             )
             db.add(message)
             await db.commit()
@@ -203,9 +235,11 @@ async def chat_message(sid: str, data: dict):
         "appointment_id": appointment_id,
         "sender_id": str(message.sender_id),
         "body": message.body,
+        "idempotency_key": message.idempotency_key,
         "created_at": message.created_at.isoformat(),
     }
-    await sio.emit("chat:message", payload, room=_chat_room(appointment_id))
+    await sio.emit("chat:message", payload, room=_chat_room(appointment_id), skip_sid=sid)
+    return {"ok": True, "message": payload}
 
 
 async def _load_user(session: Optional[dict]) -> Optional[User]:

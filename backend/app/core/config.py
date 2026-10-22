@@ -80,10 +80,19 @@ class Settings(BaseSettings):
     TURN_USERNAME: str = "gramcare"
     TURN_CREDENTIAL: str = "gramcarepass"
     TURN_ENABLED: bool = False  # flip on once coturn is deployed
+    # Alternative to self-hosting: an endpoint that returns a JSON list of
+    # iceServers with short-lived credentials (e.g. Metered's
+    # https://<app>.metered.live/api/v1/turn/credentials?apiKey=...).
+    TURN_CREDENTIALS_URL: str = ""
 
     @property
     def stun_urls(self) -> List[str]:
         return [u.strip() for u in self.STUN_URLS.split(",") if u.strip()]
+
+    @property
+    def turn_urls(self) -> List[str]:
+        """TURN_URL may list several, e.g. udp:3478 plus turns:443 for strict networks."""
+        return [u.strip() for u in self.TURN_URL.split(",") if u.strip()]
 
     # ── Sync ───────────────────────────────────────────────────────────────
     SYNC_MAX_BATCH_SIZE: int = 100
