@@ -1,280 +1,294 @@
-# GramCare Backend
+<div align="center">
 
-**GramCare** is an offline-first, low-bandwidth telehealth platform for rural villages in India, built as described in the research paper:
-> *"GramCare: A Low-Cost, Offline-First, Low-Bandwidth Telehealth Platform for Rural Villages in India"*
+# 🏡 GramCare
 
-## 🏗️ Architecture
+**A village health register that brings a doctor one phone call away.**
+
+Low-cost, offline-first, low-bandwidth telehealth for rural villages in India — community health workers register patients and record vitals, doctors consult over peer-to-peer audio/video, and nothing breaks when the signal does.
+
+Based on the research paper *“GramCare: A Low-Cost, Offline-First, Low-Bandwidth Telehealth Platform for Rural Villages in India.”*
+
+`FastAPI` · `Socket.IO` · `WebRTC` · `PostgreSQL` · `React` · `Vite`
+
+</div>
+
+---
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Who uses it](#who-uses-it)
+- [Built for bad networks](#built-for-bad-networks)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Calls & chat](#calls--chat)
+- [Offline sync](#offline-sync)
+- [Security](#security)
+- [API overview](#api-overview)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Project structure](#project-structure)
+- [Roadmap](#roadmap)
+
+---
+
+## What it does
+
+| | |
+|---|---|
+| 📋 **Register villagers** | Phone, name, basic history, and recorded consent — in two steps. |
+| 🩺 **Record visits** | Vitals with live out-of-range warnings, tap-to-select symptoms, chief complaint. |
+| 🚦 **Red-flag triage** | Rule-based, traffic-light triage on every visit. Always labelled *advice only*. |
+| 📅 **Book doctors** | Live free slots in the clinic's time zone; if a slot is taken, alternatives are offered instantly. |
+| 📞 **Consult** | Peer-to-peer audio (video optional) + chat in the same room. No media server, no per-minute cost. |
+| 📨 **Store & forward** | When a live call isn't possible, the CHW sends the case; a doctor replies later, optionally with a prescription. |
+| ℞ **Prescribe** | Multi-medicine prescriptions with advice and follow-up date, added to the patient's file. |
+| 🔒 **Offline PIN** | App locks after 5 idle minutes and unlocks on-device with no network. |
+| 🧾 **Audit trail** | Append-only log of who read or changed what. |
+
+The UI is styled as a paper register — ruled cards, rubber-stamp confirmations, a marigold *toran* over each page — with a **Daylight / Lantern** theme toggle on every screen.
+
+## Who uses it
+
+| Role | Can do |
+|---|---|
+| **Health worker (CHW)** | Register patients in their facility, record visits, book consults, send store-and-forward cases, read doctors' replies |
+| **Doctor** | Run consultations, write prescriptions, answer the store-and-forward queue |
+| **Patient** | See their appointments, visit history and prescriptions; cancel their own appointment |
+| **Admin** | Onboard doctors and CHWs, create facilities, assign people to facilities, (de)activate accounts, read the audit trail |
+
+## Built for bad networks
+
+Rural links drop, crawl, and come back. The consultation room is designed (and tested) for that:
+
+- **Calls resume by themselves.** WebRTC uses the *perfect negotiation* pattern, restarts ICE when the path fails, and renegotiates automatically when either side reconnects or reloads.
+- **Messages are never lost.** Sends are optimistic and kept in an outbox (persisted in the browser) until the server acknowledges them; idempotency keys mean retries never duplicate. Missed messages are back-filled after every reconnect.
+- **Audio first.** Video is optional, capped at ~250 kbps and 320×240.
+- **Works where WebSockets don't.** Socket.IO falls back to HTTP long-polling.
+- **You can see the network.** A signal meter (*Good signal / 2G mood / Offline*) and an in-call quality meter.
+
+An end-to-end stress test (two real browsers) covers: chat both ways, audio flowing both ways, simultaneous camera changes, one side going offline mid-call and mid-chat, a tab reload mid-call, and an unsent message surviving a reload.
+
+## Architecture
 
 ```
-Client (Android/Web)
-  │── Local SQLite store (offline-first)
-  │── Sync agent (outbox, delta sync, exponential backoff)
-  │
-  └── HTTPS/REST ──► API Gateway (FastAPI)
-                         │
-                         ├── Auth (OTP + JWT + RBAC)
-                         ├── Appointments
-                         ├── Patients / Encounters
-                         ├── Sync Service (delta sync, conflict resolution)
-                         ├── Teleconsultation (peer-to-peer WebRTC, no SFU)
-                         ├── Chat + call signaling (Socket.IO)
-                         ├── Store-and-Forward
-                         ├── Media (MinIO S3)
-                         └── Triage (rule-based, advice only)
-                         │
-                         ├── PostgreSQL (authoritative DB + audit log)
-                         ├── Redis (sessions, rate limiting, queues)
-                         └── MinIO (images, voice notes, PDFs)
+ Phone / browser (React)
+   ├─ REST (axios, auto token refresh) ──────────────┐
+   ├─ Socket.IO ── chat + WebRTC signalling ─────────┤
+   └─ WebRTC media ── peer to peer (TURN if needed) ─┼──► other participant
+                                                     │
+                                       FastAPI + Socket.IO  (one process)
+                                         ├─ Auth: OTP + JWT + refresh rotation
+                                         ├─ Patients · Encounters · Prescriptions
+                                         ├─ Appointments + slot scheduling
+                                         ├─ Delta sync (change log + conflict rules)
+                                         ├─ Store-and-forward · Triage · Media
+                                         └─ Record-level access control
+                                                     │
+                       PostgreSQL ── Redis (optional) ── MinIO (optional)
 ```
 
-## 📁 Project Structure
+No SFU, no paid SMS, no paid SaaS: the whole stack runs on one small VM.
 
-```
-gramcare/
-├── docker-compose.yml          # All services: PostgreSQL, Redis, MinIO, coturn (optional), API
-├── scripts/
-│   └── init.sql                # PostgreSQL initialization
-└── backend/
-    ├── Dockerfile
-    ├── requirements.txt
-    ├── alembic.ini
-    ├── alembic/
-    │   └── env.py              # Async Alembic migrations
-    └── app/
-        ├── main.py             # FastAPI app entry point
-        ├── api/v1/
-        │   ├── router.py       # Aggregates all routers
-        │   └── endpoints/
-        │       ├── auth.py         # OTP request/verify, JWT refresh, logout
-        │       ├── patients.py     # Patient registration, records
-        │       ├── appointments.py # Booking, slot availability, conflict detection
-        │       ├── encounters.py   # Health records + prescriptions
-        │       ├── sync.py         # Delta sync upload/pull
-        │       ├── teleconsult.py  # Call room + ICE config, store-and-forward
-        │       ├── messages.py     # Chat history (live delivery via Socket.IO)
-        │       ├── media.py        # Presigned upload/download URLs
-        │       ├── triage.py       # Rule-based red-flag checker
-        │       └── users.py        # User management + audit logs
-        ├── core/
-        │   ├── config.py       # Pydantic settings
-        │   ├── security.py     # JWT, OTP, hashing
-        │   └── deps.py         # FastAPI DI: auth, RBAC, Redis
-        ├── db/
-        │   └── session.py      # Async SQLAlchemy engine
-        ├── models/
-        │   └── models.py       # All ORM models
-        ├── schemas/
-        │   └── schemas.py      # All Pydantic request/response schemas
-        ├── realtime/
-        │   └── socketio_app.py # WebRTC call signaling + chat (Socket.IO)
-        ├── services/
-        │   ├── otp_service.py      # Console OTP (no paid SMS gateway)
-        │   └── storage_service.py  # MinIO presigned URLs
-        └── utils/
-            ├── audit.py        # Append-only audit log helper
-            └── sync.py         # Version/sequence management
-```
-
-## 🚀 Quick Start
+## Quick start
 
 ### Prerequisites
-- Docker & Docker Compose
-- Python 3.12+ (for local dev without Docker)
 
-### 1. Start all services with Docker Compose
+- Python 3.12+
+- Node.js 20+
+- PostgreSQL 16 (local, Docker, or a free hosted one such as Neon)
+
+### Option A — Docker Compose (everything)
 
 ```bash
-cd gramcare
-docker compose up -d
+docker compose up -d        # Postgres, Redis, MinIO, API (+ optional coturn)
+cd frontend && npm install && npm run dev
 ```
 
-This starts:
-| Service | Port | Purpose |
-|---------|------|---------|
-| PostgreSQL | 5432 | Authoritative database + audit log |
-| Redis | 6379 | Sessions, rate limiting, job queues |
-| MinIO | 9000/9001 | Object storage (images, voice notes, PDFs) |
-| FastAPI API + Socket.IO | 8000 | REST backend, WebRTC call signaling & chat |
-| coturn *(optional)* | 3478 | TURN relay-of-last-resort for strict NATs |
+### Option B — run it yourself
 
-No SFU/media-server and no paid SMS API are used — calls are peer-to-peer
-WebRTC signaled over the same Socket.IO server that carries chat, and OTPs
-are logged to the console in dev. This is the cost-cutting choice: the whole
-stack runs free and self-hosted on one low-cost VM, matching the paper's
-deployment target.
-
-### 2. API Documentation
-
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-- Health: http://localhost:8000/health
-- Socket.IO endpoint: ws://localhost:8000/socket.io
-- MinIO Console: http://localhost:9001 (minioadmin / minioadmin)
-
-### 3. Local development (without Docker)
+**Backend**
 
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env   # Edit as needed
+cp .env.example .env         # set DATABASE_URL and SECRET_KEY
+alembic upgrade head
 uvicorn app.main:socket_app --reload --port 8000
 ```
 
-`app.main:socket_app` serves the REST API and the Socket.IO signaling/chat
-endpoint on the same port. (`app.main:app` still works and is what the test
-suite imports, but it won't have `/socket.io` mounted.)
+> Use `app.main:socket_app`, not `app.main:app` — only `socket_app` serves Socket.IO (calls and chat).
 
-## 🖥️ Frontend (`frontend/`)
-
-React + Vite. Styled as a *village health register*: ruled-paper cards, rubber-stamp confirmations, a marigold toran over each page.
+**Frontend**
 
 ```bash
 cd frontend
 npm install
-npm run dev            # http://localhost:5173 — expects the API on VITE_API_URL (default :8000)
+npm run dev                  # http://localhost:5173
 ```
 
-- **Themes:** Daylight / Lantern toggle on every screen (remembers your choice, follows the OS on first visit). Palette is green, brick red, marigold orange, ink and greys only.
-- **Roles:** health worker, doctor, patient and admin each get their own nav and dashboard. Demo-account login works while the API runs with `DEBUG=true`; phone + OTP login is on the second tab.
-- **Consultation room:** peer-to-peer audio call (video optional), live chat with history, vitals + symptom triage with traffic lights, prescriptions with several medicines, and a "send the case" fallback when a call isn't possible.
-- **Offline PIN:** set in Profile; the app locks after 5 idle minutes and unlocks on-device with no network.
-- **Extras:** `Ctrl+K` / `/` quick jump, a signal meter that pings `/health`, and a few easter eggs.
+Set `VITE_API_URL` / `VITE_SOCKET_URL` in `frontend/.env` if the API isn't on `http://127.0.0.1:8000`.
 
-> Calls need a secure origin: `localhost` works for development, but phones on a LAN IP need HTTPS. Across different networks, enable the coturn TURN server (`TURN_ENABLED=true`).
+**Log in:** with `DEBUG=true` (or `DEMO_LOGIN_ENABLED=true`) the login page offers one-click demo accounts for every role. Otherwise use phone + OTP — in development the OTP is printed in the API console.
 
-## 🔐 Authentication Flow
+| Service | URL |
+|---|---|
+| Web app | http://localhost:5173 |
+| API docs (debug only) | http://localhost:8000/docs |
+| Health check | http://localhost:8000/health |
 
-```
-1. POST /api/v1/auth/otp/request  { phone, name }
-   → OTP sent via SMS (or printed to console in dev)
+## Configuration
 
-2. POST /api/v1/auth/otp/verify   { phone, otp }
-   → { access_token, refresh_token, user_id, role }
+All backend settings are environment variables (see `backend/.env.example`).
 
-3. All protected endpoints require: Authorization: Bearer <access_token>
+| Variable | Purpose | Default |
+|---|---|---|
+| `DATABASE_URL` | Async Postgres URL (`postgresql+asyncpg://…`) | local Postgres |
+| `SECRET_KEY` | JWT signing key — **change in production** | — |
+| `DEBUG` | Debug logging, `/docs`, demo logins | `true` |
+| `DEMO_LOGIN_ENABLED` | Demo logins without the rest of debug mode | `false` |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins (your frontend URL) | localhost |
+| `CONSOLE_OTP` | Print OTPs to the server log (no SMS gateway) | `true` |
+| `CLINIC_UTC_OFFSET_MINUTES` | Doctors' hours are clinic-local time | `330` (IST) |
+| `STUN_URLS` | STUN servers | Google STUN |
+| `TURN_ENABLED`, `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | Self-hosted TURN (`TURN_URL` may list several) | off |
+| `TURN_CREDENTIALS_URL` | Hosted TURN credentials endpoint (e.g. Metered) | — |
+| `REDIS_URL` | Rate limiting & PIN lockout (optional — degrades gracefully) | local Redis |
+| `MINIO_*` | Object storage for photos / voice notes | local MinIO |
 
-4. POST /api/v1/auth/refresh       { refresh_token }
-   → New token pair (old refresh token revoked)
+## Calls & chat
 
-5. POST /api/v1/auth/logout        { refresh_token }
-   → Revokes refresh token
-```
+Everything happens in the appointment's consultation room. Connect to Socket.IO with `auth: { token }`.
 
-## 📡 Key API Endpoints
+| Event | Direction | Notes |
+|---|---|---|
+| `chat:join` | → server | Re-sent after every reconnect |
+| `chat:message` | → server | `{appointment_id, body, idempotency_key}` · ack `{ok, message}` |
+| `chat:message` | ← server | Broadcast to the other participants |
+| `chat:typing` | ↔ | Typing indicator |
+| `call:join` | → server | Ack `{ok, peers}` — peers already in the call |
+| `call:signal` | ↔ | SDP description / ICE candidate, relayed with the sender's id |
+| `call:peer-joined` / `call:peer-left` / `call:peer-offline` | ← server | Presence |
+| `call:leave` | → server | Also sent on tab close |
 
-| Method | Endpoint | Description | Roles |
-|--------|----------|-------------|-------|
-| POST | `/api/v1/auth/otp/request` | Request OTP | Public |
-| POST | `/api/v1/auth/otp/verify` | Verify OTP → tokens | Public |
-| GET | `/api/v1/users/me` | Current user profile | All |
-| PUT / DELETE | `/api/v1/users/me/pin` | Set / clear offline unlock PIN | All |
-| POST | `/api/v1/users/me/pin/verify` | Check PIN (5 tries / 15 min) | All |
-| PATCH | `/api/v1/users/{id}` | Role, facility, active status | Admin |
-| GET | `/api/v1/patients/me` | Own patient profile | Patient |
-| POST | `/api/v1/patients` | Register patient | CHW, Admin |
-| GET | `/api/v1/patients` | List patients | CHW, Doctor, Admin |
-| GET | `/api/v1/appointments/slots` | Available slots (`doctor_id` = doctor profile id) | All |
-| POST | `/api/v1/appointments` | Book appointment (409 → `alternative_slots`) | CHW, Doctor, Admin |
-| PATCH | `/api/v1/appointments/{id}` | Reschedule / status (patients: cancel only) | Participants |
-| POST | `/api/v1/encounters` | Create health record | CHW, Admin |
-| POST | `/api/v1/encounters/{id}/prescriptions` | Write prescription | Doctor, Admin |
-| POST | `/api/v1/sync/upload` | Upload offline changes | All |
-| GET | `/api/v1/sync/pull` | Pull server changes | All |
-| POST | `/api/v1/teleconsult/room` | Get call room name + ICE servers | All |
-| POST | `/api/v1/teleconsult/store-forward` | Submit S&F bundle | CHW |
-| GET | `/api/v1/teleconsult/store-forward` | Doctor: queue; CHW: own cases + replies | Doctor, CHW |
-| POST | `/api/v1/teleconsult/store-forward/{id}/respond` | Reply (+ optional prescription) | Doctor |
-| GET | `/api/v1/messages/{appointment_id}` | Chat history for an appointment | All |
-| POST | `/api/v1/media/presign` | Get upload URL | CHW, Admin |
-| POST | `/api/v1/triage/evaluate` | Evaluate red flags | CHW, Admin |
-| GET | `/api/v1/audit-logs` | View audit trail | Admin |
+Only participants of an appointment (its patient, the assigned doctor, the CHW or a CHW of the patient's facility, admins) can join its rooms; signals are relayed only for sockets that joined.
 
-## 📞 Real-time: calls + chat (Socket.IO)
+**TURN:** direct peer-to-peer connections fail on some networks (often between two mobile carriers). For real-world use configure a TURN relay — either self-host [coturn](https://github.com/coturn/coturn) (included in `docker-compose.yml`, needs a VM with public UDP) or set `TURN_CREDENTIALS_URL` to a hosted provider.
 
-Connect to `ws://localhost:8000/socket.io` with `auth: { token: <access_token> }`.
+## Offline sync
 
-**Call signaling** (peer-to-peer WebRTC, audio-first — no SFU):
-```
-emit  call:join   { appointment_id }
-on    call:peer-joined
-emit  call:signal { appointment_id, data }   # SDP offer/answer/ICE, relayed as-is
-on    call:signal { appointment_id, data }
-emit  call:leave  { appointment_id }
-on    call:peer-left
-```
+Devices keep working offline and sync through `/api/v1/sync/upload` and `/api/v1/sync/pull`. Every write — through REST or sync — is recorded in a change log with a monotonically increasing version, so a device that pulls `since=N` sees everything after `N`.
 
-**Chat**:
-```
-emit  chat:join    { appointment_id }
-emit  chat:message { appointment_id, body, idempotency_key? }
-on    chat:message { id, appointment_id, sender_id, body, created_at }
-```
+| Data | Conflict rule (paper §8.2) |
+|---|---|
+| Encounters, prescriptions | **Union merge** — inserts always accepted; edits refused (corrections are new entries) |
+| Patient profiles | **Last-writer-wins** — the overwritten server copy is returned and logged |
+| Appointments | **Server-authoritative** — a stale change or a taken slot is rejected with alternative slots |
 
-The server authorizes every `join`/`message` against the appointment's
-patient/CHW/doctor/admin, and persists chat messages so `GET
-/api/v1/messages/{appointment_id}` can back-fill history for anyone who
-reconnects or was offline.
+Uploads are validated with the same schemas and access rules as the REST API, each entry in its own savepoint, with a per-entry result. Pulls are scoped: patients get only their own records, CHWs their facility.
 
-## 🔄 Offline Sync Design
-
-The sync service implements the conflict rules from §8.2 of the paper:
-
-| Table | Conflict Rule |
-|-------|--------------|
-| `encounters`, `prescriptions` | **Union merge** — inserts always accepted; updates refused (corrections are new entries) |
-| `patient_profiles` | **Last-writer-wins** — overwritten server copy is returned in `conflicts` and logged in audit |
-| `appointments` | **Server-authoritative** — stale updates or taken slots are rejected with `alternative_slots` |
-
-- Every outbox entry carries a client-generated **idempotency key**; replays return `duplicate`.
-- Entries are validated with the same schemas, roles and record-level access rules as the REST API, each in its own savepoint. `results[]` in the upload response tells the client which outbox rows to drop.
-- **Every** write — REST or sync — goes through `app/utils/sync.record_change`, which bumps the version sequence and appends to `sync_change_log`. So a device pulling `since=N` sees doctors' prescriptions, server-side reschedules, etc.
-- Pulls are scoped: patients get only their own records, CHWs their facility, doctors/admins everything.
-
-## 🔒 Record-level access (`app/core/access.py`)
-
-| Role | Patients | Appointments |
-|------|----------|--------------|
-| admin | all | all |
-| doctor | all | assigned to them |
-| chw | own facility | booked by them or in their facility |
-| patient | self | own |
-
-Socket.IO `call:join` / `chat:join` use the same rules, and `call:signal` is only relayed for sockets that have joined the room.
-
-## 🛡️ Security Controls
+## Security
 
 | Threat | Control |
-|--------|---------|
-| Unauthorized account access | Phone OTP + short-lived JWT + refresh token rotation |
-| Excess access by staff | Role-based access control (patient/CHW/doctor/admin) |
-| Interception in transit | TLS 1.2+ for API; DTLS-SRTP for WebRTC (mandatory in the browser/WebRTC stack itself) |
-| Lost/stolen device | Offline PIN (device PIN hash stored in DB) |
-| Data misuse | Consent recorded at registration; no third-party analytics |
-| Tampering | Append-only audit log; idempotent sync with version checking |
-| Triage misread as diagnosis | Output labelled "advice only" in every response |
+|---|---|
+| Account takeover | Phone OTP (cryptographically random) · short-lived JWT · rotating refresh tokens |
+| Staff seeing too much | Role checks **and** record-level checks (facility for CHWs, self for patients) |
+| Interception | TLS for the API; DTLS-SRTP for WebRTC media |
+| Lost phone | Offline PIN with auto-lock; 5 wrong tries end the session |
+| Call hijacking | Signals only relayed between authorised members of the room |
+| Tampering | Append-only audit log; idempotent, versioned sync |
+| Triage mistaken for diagnosis | Every result labelled *advice only — a doctor decides* |
 
-## 🧪 Running Tests
+## API overview
+
+Full interactive docs at `/docs` when `DEBUG=true`.
+
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /auth/otp/request` · `POST /auth/otp/verify` · `POST /auth/refresh` · `POST /auth/logout` · `POST /auth/dev-login` |
+| Me | `GET/PATCH /users/me` · `PUT/DELETE /users/me/pin` · `POST /users/me/pin/verify` |
+| Admin | `GET /users` · `PATCH /users/{id}` · `POST /doctors` · `POST /chws` · `GET/POST /facilities` · `GET /audit-logs` |
+| Patients | `POST/GET /patients` · `GET /patients/me` · `GET/PATCH /patients/{id}` · `GET /patients/{id}/records` · `POST /patients/{id}/consent` |
+| Appointments | `GET /appointments/slots` · `POST/GET /appointments` · `GET/PATCH /appointments/{id}` |
+| Encounters | `POST /encounters` · `GET /encounters/{id}` · `POST/GET /encounters/{id}/prescriptions` |
+| Teleconsult | `POST /teleconsult/room` · `GET /teleconsult/ice-servers` · `POST/GET /teleconsult/store-forward` · `POST /teleconsult/store-forward/{id}/respond` |
+| Chat | `GET /messages/{appointment_id}` |
+| Sync | `POST /sync/upload` · `GET /sync/pull` · `GET /sync/status` |
+| Triage | `POST /triage/evaluate` · `GET /triage/rules` |
+| Media | `POST /media/presign` · `POST /media/{id}/complete` · `GET /media/{id}/download` |
+
+All paths are under `/api/v1`.
+
+## Testing
 
 ```bash
 cd backend
 pytest -v
 ```
 
-Tests are self-contained (SQLite via aiosqlite, in-memory Redis stub, captured OTPs) — no Docker, Postgres or Redis needed. They cover auth, triage, access control, booking conflicts, encounters/prescriptions, offline sync conflict rules and pull scoping, store-and-forward and the offline PIN.
+25 self-contained tests (SQLite, in-memory Redis stub, captured OTPs — no services needed) covering auth, triage, record-level access, booking conflicts, encounters and prescriptions, sync conflict rules and pull scoping, store-and-forward, and the offline PIN.
 
-Database migrations: `alembic upgrade head` (0001 initial schema, 0002 sync patient scope).
+```bash
+cd frontend
+npm run build
+npm run lint
+```
 
-## 📊 Roles
+## Deployment
 
-| Role | Description |
-|------|-------------|
-| `patient` | Books appointments, joins consultations, views own records |
-| `chw` | Registers patients, records vitals, books appointments, submits S&F |
-| `doctor` | Reviews cases, writes prescriptions, responds to S&F bundles |
-| `admin` | Full access, user management, facility management, audit logs |
+The repo is ready for a **Railway (API) + Vercel (web) + Neon (Postgres)** setup:
 
-## 🌐 Multilingual Support
+- `backend/Dockerfile` honours `$PORT` and runs `alembic upgrade head` before starting.
+- `backend/railway.json` sets the build and the `/health` check.
+- `frontend/vercel.json` rewrites all routes to the SPA.
 
-The backend stores `language_code` per user (e.g., `en`, `hi`, `kn`).
-The frontend uses this to serve the correct i18n resource file.
-Prescription instructions are designed to be read aloud in the local language. 
+Production checklist:
+
+1. Set `DATABASE_URL`, a fresh `SECRET_KEY`, `DEBUG=false`, `APP_ENV=production`.
+2. Set `ALLOWED_ORIGINS` to the frontend URL; set `VITE_API_URL` and `VITE_SOCKET_URL` on the frontend to the API URL.
+3. Configure TURN (see [Calls & chat](#calls--chat)).
+4. Decide on `DEMO_LOGIN_ENABLED` — with it on, anyone with the link can log in as any role.
+5. Serve over HTTPS — browsers only allow microphone/camera on secure origins.
+
+## Project structure
+
+```
+gramcare/
+├── docker-compose.yml          Postgres, Redis, MinIO, API, coturn
+├── scripts/init.sql
+├── backend/
+│   ├── Dockerfile · railway.json · requirements.txt · alembic/
+│   ├── app/
+│   │   ├── main.py             FastAPI app + Socket.IO mount (socket_app)
+│   │   ├── api/v1/endpoints/   auth, users, patients, appointments, encounters,
+│   │   │                       teleconsult, messages, media, triage, sync
+│   │   ├── core/               config, security, deps (roles), access (records)
+│   │   ├── models/ · schemas/
+│   │   ├── realtime/           Socket.IO: chat + WebRTC signalling
+│   │   ├── services/           scheduling, OTP, storage
+│   │   └── utils/              audit log, sync change log
+│   └── tests/
+└── frontend/
+    ├── vercel.json
+    └── src/
+        ├── pages/              Login, Dashboard, Book, Register, Room, Records,
+        │                       Store & forward, Profile, Admin, Audit
+        ├── components/         Layout, Shell (lock + palette), theme, signal meter
+        ├── lib/                useCall, useChat, useRoomSocket, sync helpers, copy
+        └── ui/                 component kit, toasts, hand-drawn doodles
+```
+
+## Roadmap
+
+- Full offline client (IndexedDB store + sync outbox for visits and registrations)
+- Interface translations (Hindi, Kannada, Tamil, …) — language preference is already stored per user
+- Free SMS / WhatsApp OTP gateway
+- Read-aloud prescriptions in the patient's language
+- IVR / USSD access for feature phones
+
+---
+
+<div align="center">
+Made for the last mile. 🌾
+</div>
