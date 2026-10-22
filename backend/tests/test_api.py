@@ -4,50 +4,8 @@ Run with: pytest tests/ -v
 """
 
 import pytest
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-from app.main import app
-from app.db.session import Base, get_db
-from app.core.config import settings
-
-
-# ── Test Database ─────────────────────────────────────────────────────────────
-TEST_DB_URL = "postgresql+asyncpg://gramcare_user:gramcare_password@localhost:5432/gramcare_test"
-
-test_engine = create_async_engine(TEST_DB_URL, echo=False)
-TestSessionLocal = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-async def override_get_db():
-    async with TestSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-
-
-app.dependency_overrides[get_db] = override_get_db
-
-
-@pytest.fixture(scope="session", autouse=True)
-async def setup_test_db():
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-
-@pytest.fixture
-async def client():
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver"
-    ) as c:
-        yield c
+pytestmark = pytest.mark.asyncio
 
 
 # ── Health Check Tests ────────────────────────────────────────────────────────
@@ -203,35 +161,3 @@ async def test_sync_pull_empty(client, auth_headers):
     data = response.json()
     assert data["changes"] == []
     assert data["has_more"] is False
-
-
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-@pytest.fixture
-async def auth_headers(client):
-    """Returns Authorization headers for a test CHW."""
-    # Request OTP
-    phone = "+919988776655"
-    await client.post("/api/v1/auth/otp/request", json={"phone": phone, "name": "Test CHW"})
-
-    # Get OTP from DB
-    from sqlalchemy import select
-    from app.models.models import OTPRecord
-    from app.core.security import hash_secret
-
-    async with TestSessionLocal() as session:
-        result = await session.execute(
-            select(OTPRecord)
-            .where(OTPRecord.phone == phone, OTPRecord.verified.is_(False))
-            .order_by(OTPRecord.created_at.desc())
-            .limit(1)
-        )
-        otp_record = result.scalar_one_or_none()
-
-    if not otp_record:
-        pytest.skip("Could not create test OTP")
-
-    # We can't easily recover the plain OTP (it's hashed), so use a workaround:
-    # In test mode, we patch otp = "123456" hardcoded
-    # In real tests, inject the OTP via console mock
-    pytest.skip("Requires console OTP capture — integration test only")

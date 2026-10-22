@@ -38,10 +38,6 @@ dist/
 # MinIO / S3
 .minio/
 
-# Alembic
-alembic/versions/*.py
-!alembic/versions/.gitkeep
-
 # Test
 .pytest_cache/
 .coverage

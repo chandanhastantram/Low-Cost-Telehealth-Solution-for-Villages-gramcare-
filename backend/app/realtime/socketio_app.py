@@ -33,9 +33,10 @@ import socketio
 from jose import JWTError
 from sqlalchemy import select
 
+from app.core.access import can_access_appointment
 from app.core.security import decode_access_token
 from app.db.session import AsyncSessionLocal
-from app.models.models import Appointment, ChatMessage, User, UserRole
+from app.models.models import Appointment, ChatMessage, User
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -59,10 +60,8 @@ async def _authenticate(auth: Optional[dict]) -> Optional[User]:
         return None
     try:
         payload = decode_access_token(token)
-    except JWTError:
-        return None
-    user_id = payload.get("sub")
-    if not user_id:
+        user_id = uuid.UUID(payload.get("sub"))
+    except (JWTError, TypeError, ValueError):
         return None
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -72,34 +71,14 @@ async def _authenticate(auth: Optional[dict]) -> Optional[User]:
 
 
 async def _can_access_appointment(user: User, appointment_id: str) -> bool:
-    """Only the assigned patient (via their CHW/self), CHW, doctor, or an
-    admin may join a given appointment's call/chat rooms."""
-    if user.role == UserRole.admin:
-        return True
+    """Same rules as the REST API (app/core/access.py)."""
     try:
         appt_uuid = uuid.UUID(appointment_id)
     except ValueError:
         return False
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Appointment).where(Appointment.id == appt_uuid))
-        appt = result.scalar_one_or_none()
-        if not appt:
-            return False
-        if user.role == UserRole.chw:
-            return appt.chw_id == user.id
-        if user.role == UserRole.doctor:
-            from app.models.models import DoctorProfile
-            doc = (
-                await db.execute(select(DoctorProfile).where(DoctorProfile.user_id == user.id))
-            ).scalar_one_or_none()
-            return bool(doc and appt.doctor_id == doc.id)
-        if user.role == UserRole.patient:
-            from app.models.models import PatientProfile
-            pat = (
-                await db.execute(select(PatientProfile).where(PatientProfile.user_id == user.id))
-            ).scalar_one_or_none()
-            return bool(pat and appt.patient_id == pat.id)
-        return False
+        appt = await db.get(Appointment, appt_uuid)
+        return bool(appt and await can_access_appointment(db, user, appt))
 
 
 # ── Connection lifecycle ───────────────────────────────────────────────────
@@ -139,6 +118,11 @@ async def call_signal(sid: str, data: dict):
     appointment_id = str(data.get("appointment_id", ""))
     payload: Any = data.get("data")
     room = _call_room(appointment_id)
+    # Only a socket that passed the call:join authorization may signal into
+    # the room — otherwise anyone could inject SDP into someone else's call.
+    if room not in sio.rooms(sid):
+        await sio.emit("call:error", {"message": "Join the call before signaling."}, to=sid)
+        return
     await sio.emit(
         "call:signal",
         {"appointment_id": appointment_id, "data": payload},
@@ -151,6 +135,8 @@ async def call_signal(sid: str, data: dict):
 async def call_leave(sid: str, data: dict):
     appointment_id = str(data.get("appointment_id", ""))
     room = _call_room(appointment_id)
+    if room not in sio.rooms(sid):
+        return
     await sio.emit("call:peer-left", {"appointment_id": appointment_id}, room=room, skip_sid=sid)
     await sio.leave_room(sid, room)
 
@@ -226,5 +212,7 @@ async def _load_user(session: Optional[dict]) -> Optional[User]:
     if not session or "user_id" not in session:
         return None
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.id == session["user_id"]))
+        result = await db.execute(
+            select(User).where(User.id == uuid.UUID(session["user_id"]), User.is_active.is_(True))
+        )
         return result.scalar_one_or_none()

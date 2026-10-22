@@ -7,17 +7,19 @@ GET  /api/v1/media/{id}/download   – get presigned download URL
 """
 
 import uuid
-from datetime import timedelta
+
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import load_encounter_or_404
 from app.core.deps import CHWOrAbove, CurrentUser, get_db
 from app.models.models import MediaAttachment
 from app.schemas.schemas import PresignedUploadRequest, PresignedUploadResponse
 from app.services.storage_service import get_presigned_download, get_presigned_upload
 from app.utils.audit import log_action
+from app.utils.sync import record_change
 
 router = APIRouter(prefix="/media", tags=["Media"])
 
@@ -46,9 +48,13 @@ async def presign_upload(
     if body.file_size_bytes > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail=f"File too large. Max {MAX_FILE_SIZE // (1024*1024)} MB.")
 
+    await load_encounter_or_404(db, current_user, body.encounter_id)
+
     # Build S3 key
     attachment_id = uuid.uuid4()
     ext = body.file_name.rsplit(".", 1)[-1] if "." in body.file_name else "bin"
+    if not ext.isalnum() or len(ext) > 8:
+        ext = "bin"
     file_key = f"encounters/{body.encounter_id}/{attachment_id}.{ext}"
 
     # Get presigned URL from MinIO
@@ -89,12 +95,22 @@ async def mark_upload_complete(
     attachment = result.scalar_one_or_none()
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found.")
+    if attachment.uploader_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the uploader can complete this upload.")
 
-    attachment.upload_completed = True
-    if checksum_sha256:
-        attachment.checksum_sha256 = checksum_sha256
-    await db.commit()
-    await log_action(db, current_user.id, "update", "media_attachment", str(attachment_id))
+    if not attachment.upload_completed:
+        attachment.upload_completed = True
+        if checksum_sha256:
+            attachment.checksum_sha256 = checksum_sha256
+        # Link the file onto its encounter so it reaches the doctor via sync.
+        encounter = await load_encounter_or_404(db, current_user, attachment.encounter_id)
+        if (attachment.file_type or "").startswith("audio/"):
+            encounter.voice_note_url = attachment.file_key
+        elif (attachment.file_type or "").startswith("image/"):
+            encounter.photo_urls = [*(encounter.photo_urls or []), attachment.file_key]
+        await record_change(db, "encounters", encounter, "update", current_user.id)
+        await log_action(db, current_user.id, "update", "media_attachment", str(attachment_id))
+        await db.commit()
     return {"ok": True, "file_key": attachment.file_key}
 
 
@@ -111,7 +127,9 @@ async def get_download_url(
     attachment = result.scalar_one_or_none()
     if not attachment or not attachment.upload_completed:
         raise HTTPException(status_code=404, detail="Attachment not found or not yet uploaded.")
+    await load_encounter_or_404(db, current_user, attachment.encounter_id)
 
     download_url = await get_presigned_download(attachment.file_key, expires_seconds=900)
     await log_action(db, current_user.id, "read", "media_attachment", str(attachment_id))
+    await db.commit()
     return {"download_url": download_url, "content_type": attachment.file_type}

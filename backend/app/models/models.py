@@ -112,6 +112,10 @@ class User(Base):
         Index("ix_users_role_facility", "role", "facility_id"),
     )
 
+    @property
+    def has_offline_pin(self) -> bool:
+        return self.device_pin_hash is not None
+
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
@@ -382,10 +386,13 @@ class SyncChangeLog(Base):
     changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     idempotency_key = Column(String(200), nullable=True)
     facility_id = Column(UUID(as_uuid=True), ForeignKey("facilities.id"), nullable=True)
+    # Whose record this is — lets a patient's device pull only their own data.
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patient_profiles.id"), nullable=True)
 
     __table_args__ = (
         Index("ix_sync_change_table_version", "table_name", "version"),
         Index("ix_sync_change_facility_version", "facility_id", "version"),
+        Index("ix_sync_change_patient_version", "patient_id", "version"),
     )
 
 

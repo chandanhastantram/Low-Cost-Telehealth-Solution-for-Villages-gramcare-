@@ -3,7 +3,6 @@ GramCare – JWT + OTP authentication core
 """
 
 import hashlib
-import random
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
@@ -34,7 +33,7 @@ def hash_token(token: str) -> str:
 # ── OTP ───────────────────────────────────────────────────────────────────────
 
 def generate_otp(length: int = settings.OTP_LENGTH) -> str:
-    return "".join(random.choices(string.digits, k=length))
+    return "".join(secrets.choice(string.digits) for _ in range(length))
 
 
 # ── JWT ───────────────────────────────────────────────────────────────────────

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "GramCare"
     APP_ENV: str = "development"
     DEBUG: bool = True
+    # One-click demo accounts (POST /auth/dev-login). On whenever DEBUG is;
+    # set this alone to run a public demo without SQL echo or /docs.
+    DEMO_LOGIN_ENABLED: bool = False
     # Auto-create tables on startup via SQLAlchemy metadata instead of
     # requiring `alembic upgrade head` first. Handy for a from-scratch local
     # Postgres; skip it (the default) once migrations are the source of
@@ -85,6 +88,11 @@ class Settings(BaseSettings):
     # ── Sync ───────────────────────────────────────────────────────────────
     SYNC_MAX_BATCH_SIZE: int = 100
     SYNC_CHECKPOINT_INTERVAL_SECONDS: int = 30
+
+    # ── Scheduling ─────────────────────────────────────────────────────────
+    # Doctors' "09:00–17:00" hours are clinic-local wall-clock time. India has
+    # no DST, so a fixed offset is enough (and needs no tz database on Windows).
+    CLINIC_UTC_OFFSET_MINUTES: int = 330  # IST, +05:30
 
     # ── Rate limiting ──────────────────────────────────────────────────────
     RATE_LIMIT_OTP_PER_HOUR: int = 5

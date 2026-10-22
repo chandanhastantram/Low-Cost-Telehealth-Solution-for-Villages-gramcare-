@@ -62,18 +62,48 @@ class UserCreate(UserBase):
     pass
 
 
+SUPPORTED_LANGUAGES = {"en", "hi", "kn", "ta", "te", "mr", "bn"}
+
+
 class UserUpdate(BaseModel):
-    name: Optional[str] = None
+    """Self-service fields only; role/facility changes go through the admin endpoint."""
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
     language_code: Optional[str] = None
+
+    @field_validator("language_code")
+    @classmethod
+    def _known_language(cls, v):
+        if v is not None and v not in SUPPORTED_LANGUAGES:
+            raise ValueError(f"language_code must be one of {sorted(SUPPORTED_LANGUAGES)}")
+        return v
+
+
+class AdminUserUpdate(UserUpdate):
+    role: Optional[UserRole] = None
     facility_id: Optional[uuid.UUID] = None
+    is_active: Optional[bool] = None
 
 
 class UserResponse(UserBase):
     id: uuid.UUID
     is_active: bool
+    has_offline_pin: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PinSetRequest(BaseModel):
+    pin: str = Field(..., pattern=r"^\d{4,6}$", description="4–6 digit offline unlock PIN")
+
+
+class PinVerifyRequest(BaseModel):
+    pin: str
+
+
+class PinVerifyResponse(BaseModel):
+    valid: bool
+    attempts_remaining: int
 
 
 # ─── Facility ─────────────────────────────────────────────────────────────────
@@ -118,6 +148,7 @@ class DoctorProfileResponse(BaseModel):
 
 class CHWProfileCreate(BaseModel):
     user_id: uuid.UUID
+    facility_id: Optional[uuid.UUID] = None   # CHWs only see their facility's patients
     employee_id: Optional[str] = None
     qualification: Optional[str] = None
 
@@ -317,14 +348,24 @@ class StoreForwardCreate(BaseModel):
     idempotency_key: Optional[str] = None
 
 
+class StoreForwardRespond(BaseModel):
+    response_text: str = Field(..., min_length=1)
+    # Optional: issue a prescription on the bundle's encounter in the same step.
+    prescription: Optional[PrescriptionCreate] = None
+
+
 class StoreForwardResponse(BaseModel):
     id: uuid.UUID
     encounter_id: uuid.UUID
     patient_id: uuid.UUID
     chw_id: uuid.UUID
     doctor_id: Optional[uuid.UUID]
+    payload_json: Optional[Dict[str, Any]] = None
+    voice_note_url: Optional[str] = None
+    photo_urls: Optional[List[str]] = None
     status: str
     doctor_response: Optional[str]
+    prescription_id: Optional[uuid.UUID] = None
     created_at: datetime
     reviewed_at: Optional[datetime]
 
@@ -353,14 +394,24 @@ class SyncUploadRequest(BaseModel):
 class SyncConflict(BaseModel):
     record_id: str
     table_name: str
-    server_payload: Dict
-    resolution: str                    # merged | rejected | last_writer_wins
+    server_payload: Dict               # server's current copy of the record
+    resolution: str                    # rejected | last_writer_wins
+    alternative_slots: List[str] = []  # appointments only
+
+
+class SyncEntryResult(BaseModel):
+    """Per-entry outcome so the client knows which outbox rows to drop."""
+    idempotency_key: str
+    status: str                        # accepted | rejected | conflict
+    reason: Optional[str] = None
+    server_version: Optional[int] = None
 
 
 class SyncUploadResponse(BaseModel):
     accepted: int
     rejected: int
     conflicts: List[SyncConflict]
+    results: List[SyncEntryResult] = []
     new_checkpoint: int
 
 

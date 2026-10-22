@@ -1,111 +1,48 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import AppointmentRoom from "./pages/AppointmentRoom";
-import RegisterPatient from "./pages/RegisterPatient";
-import BookAppointment from "./pages/BookAppointment";
-import AdminPanel from "./pages/AdminPanel";
-import PatientRecords from "./pages/PatientRecords";
-import StoreForwardQueue from "./pages/StoreForwardQueue";
-import Profile from "./pages/Profile";
-import AuditLog from "./pages/AuditLog";
-import NotFound from "./pages/NotFound";
 import { getStoredUser } from "./api";
+import Shell from "./components/Shell";
+import { ToastProvider } from "./ui/toast";
+import AdminPanel from "./pages/AdminPanel";
+import AppointmentRoom from "./pages/AppointmentRoom";
+import AuditLog from "./pages/AuditLog";
+import BookAppointment from "./pages/BookAppointment";
+import Dashboard from "./pages/Dashboard";
+import Login from "./pages/Login";
+import NotFound from "./pages/NotFound";
+import PatientRecords from "./pages/PatientRecords";
+import Profile from "./pages/Profile";
+import RegisterPatient from "./pages/RegisterPatient";
+import StoreForwardQueue from "./pages/StoreForwardQueue";
 
-function RequireAuth({ children, roles }) {
-  const token = localStorage.getItem("access_token");
-  if (!token) return <Navigate to="/login" replace />;
-  if (roles) {
-    const user = getStoredUser();
-    if (!roles.includes(user?.role)) return <Navigate to="/dashboard" replace />;
-  }
-  return children;
+function Only({ roles, children }) {
+  return roles.includes(getStoredUser()?.role) ? children : <Navigate to="/dashboard" replace />;
 }
 
 export default function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route
-          path="/dashboard"
-          element={
-            <RequireAuth>
-              <Dashboard />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <RequireAuth>
-              <Profile />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/patients/new"
-          element={
-            <RequireAuth roles={["chw", "admin"]}>
-              <RegisterPatient />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/book"
-          element={
-            <RequireAuth roles={["chw", "admin"]}>
-              <BookAppointment />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin"
-          element={
-            <RequireAuth roles={["admin"]}>
-              <AdminPanel />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/audit-log"
-          element={
-            <RequireAuth roles={["admin"]}>
-              <AuditLog />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/appointment/:id"
-          element={
-            <RequireAuth>
-              <AppointmentRoom />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/patients/:id/records"
-          element={
-            <RequireAuth>
-              <PatientRecords />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/store-forward"
-          element={
-            <RequireAuth roles={["doctor", "admin"]}>
-              <StoreForwardQueue />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            localStorage.getItem("access_token") ? <NotFound /> : <Navigate to="/login" replace />
-          }
-        />
-      </Routes>
-    </Router>
+    <ToastProvider>
+      <Router>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route element={<Shell />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/appointment/:id" element={<AppointmentRoom />} />
+            <Route path="/patients/:id/records" element={<PatientRecords />} />
+            <Route path="/my-records" element={<Only roles={["patient"]}><PatientRecords own /></Only>} />
+            <Route path="/patients/new" element={<Only roles={["chw", "admin"]}><RegisterPatient /></Only>} />
+            <Route path="/book" element={<Only roles={["chw", "admin"]}><BookAppointment /></Only>} />
+            <Route
+              path="/store-forward"
+              element={<Only roles={["doctor", "chw", "admin"]}><StoreForwardQueue /></Only>}
+            />
+            <Route path="/admin" element={<Only roles={["admin"]}><AdminPanel /></Only>} />
+            <Route path="/audit-log" element={<Only roles={["admin"]}><AuditLog /></Only>} />
+          </Route>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Router>
+    </ToastProvider>
   );
 }

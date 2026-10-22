@@ -29,9 +29,10 @@ USER gramcare
 
 EXPOSE 8000
 
-# Health check
+# Health check (hosts like Railway/Render inject $PORT)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# socket_app = FastAPI REST API + Socket.IO (WebRTC signaling/chat) combined
-CMD ["uvicorn", "app.main:socket_app", "--host", "0.0.0.0", "--port", "8000"]
+# socket_app = FastAPI REST API + Socket.IO (WebRTC signaling/chat) combined.
+# Migrations run first so a deploy never starts against an older schema.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:socket_app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

@@ -124,6 +124,24 @@ uvicorn app.main:socket_app --reload --port 8000
 endpoint on the same port. (`app.main:app` still works and is what the test
 suite imports, but it won't have `/socket.io` mounted.)
 
+## 🖥️ Frontend (`frontend/`)
+
+React + Vite. Styled as a *village health register*: ruled-paper cards, rubber-stamp confirmations, a marigold toran over each page.
+
+```bash
+cd frontend
+npm install
+npm run dev            # http://localhost:5173 — expects the API on VITE_API_URL (default :8000)
+```
+
+- **Themes:** Daylight / Lantern toggle on every screen (remembers your choice, follows the OS on first visit). Palette is green, brick red, marigold orange, ink and greys only.
+- **Roles:** health worker, doctor, patient and admin each get their own nav and dashboard. Demo-account login works while the API runs with `DEBUG=true`; phone + OTP login is on the second tab.
+- **Consultation room:** peer-to-peer audio call (video optional), live chat with history, vitals + symptom triage with traffic lights, prescriptions with several medicines, and a "send the case" fallback when a call isn't possible.
+- **Offline PIN:** set in Profile; the app locks after 5 idle minutes and unlocks on-device with no network.
+- **Extras:** `Ctrl+K` / `/` quick jump, a signal meter that pings `/health`, and a few easter eggs.
+
+> Calls need a secure origin: `localhost` works for development, but phones on a LAN IP need HTTPS. Across different networks, enable the coturn TURN server (`TURN_ENABLED=true`).
+
 ## 🔐 Authentication Flow
 
 ```
@@ -149,16 +167,23 @@ suite imports, but it won't have `/socket.io` mounted.)
 | POST | `/api/v1/auth/otp/request` | Request OTP | Public |
 | POST | `/api/v1/auth/otp/verify` | Verify OTP → tokens | Public |
 | GET | `/api/v1/users/me` | Current user profile | All |
+| PUT / DELETE | `/api/v1/users/me/pin` | Set / clear offline unlock PIN | All |
+| POST | `/api/v1/users/me/pin/verify` | Check PIN (5 tries / 15 min) | All |
+| PATCH | `/api/v1/users/{id}` | Role, facility, active status | Admin |
+| GET | `/api/v1/patients/me` | Own patient profile | Patient |
 | POST | `/api/v1/patients` | Register patient | CHW, Admin |
 | GET | `/api/v1/patients` | List patients | CHW, Doctor, Admin |
-| GET | `/api/v1/appointments/slots` | Available slots | All |
-| POST | `/api/v1/appointments` | Book appointment | CHW, Admin |
+| GET | `/api/v1/appointments/slots` | Available slots (`doctor_id` = doctor profile id) | All |
+| POST | `/api/v1/appointments` | Book appointment (409 → `alternative_slots`) | CHW, Doctor, Admin |
+| PATCH | `/api/v1/appointments/{id}` | Reschedule / status (patients: cancel only) | Participants |
 | POST | `/api/v1/encounters` | Create health record | CHW, Admin |
 | POST | `/api/v1/encounters/{id}/prescriptions` | Write prescription | Doctor, Admin |
 | POST | `/api/v1/sync/upload` | Upload offline changes | All |
 | GET | `/api/v1/sync/pull` | Pull server changes | All |
 | POST | `/api/v1/teleconsult/room` | Get call room name + ICE servers | All |
 | POST | `/api/v1/teleconsult/store-forward` | Submit S&F bundle | CHW |
+| GET | `/api/v1/teleconsult/store-forward` | Doctor: queue; CHW: own cases + replies | Doctor, CHW |
+| POST | `/api/v1/teleconsult/store-forward/{id}/respond` | Reply (+ optional prescription) | Doctor |
 | GET | `/api/v1/messages/{appointment_id}` | Chat history for an appointment | All |
 | POST | `/api/v1/media/presign` | Get upload URL | CHW, Admin |
 | POST | `/api/v1/triage/evaluate` | Evaluate red flags | CHW, Admin |
@@ -196,11 +221,25 @@ The sync service implements the conflict rules from §8.2 of the paper:
 
 | Table | Conflict Rule |
 |-------|--------------|
-| `encounters`, `prescriptions`, `media_attachments` | **Union merge** (append-only, accepted both) |
-| `patient_profiles` | **Last-writer-wins** with conflict logged in audit |
-| `appointments` | **Server-authoritative** (rejected offline booking → CHW gets alternative slots) |
+| `encounters`, `prescriptions` | **Union merge** — inserts always accepted; updates refused (corrections are new entries) |
+| `patient_profiles` | **Last-writer-wins** — overwritten server copy is returned in `conflicts` and logged in audit |
+| `appointments` | **Server-authoritative** — stale updates or taken slots are rejected with `alternative_slots` |
 
-Every request uses a client-generated **idempotency key** to prevent duplicate records on retry.
+- Every outbox entry carries a client-generated **idempotency key**; replays return `duplicate`.
+- Entries are validated with the same schemas, roles and record-level access rules as the REST API, each in its own savepoint. `results[]` in the upload response tells the client which outbox rows to drop.
+- **Every** write — REST or sync — goes through `app/utils/sync.record_change`, which bumps the version sequence and appends to `sync_change_log`. So a device pulling `since=N` sees doctors' prescriptions, server-side reschedules, etc.
+- Pulls are scoped: patients get only their own records, CHWs their facility, doctors/admins everything.
+
+## 🔒 Record-level access (`app/core/access.py`)
+
+| Role | Patients | Appointments |
+|------|----------|--------------|
+| admin | all | all |
+| doctor | all | assigned to them |
+| chw | own facility | booked by them or in their facility |
+| patient | self | own |
+
+Socket.IO `call:join` / `chat:join` use the same rules, and `call:signal` is only relayed for sockets that have joined the room.
 
 ## 🛡️ Security Controls
 
@@ -218,8 +257,12 @@ Every request uses a client-generated **idempotency key** to prevent duplicate r
 
 ```bash
 cd backend
-pytest tests/ -v
+pytest -v
 ```
+
+Tests are self-contained (SQLite via aiosqlite, in-memory Redis stub, captured OTPs) — no Docker, Postgres or Redis needed. They cover auth, triage, access control, booking conflicts, encounters/prescriptions, offline sync conflict rules and pull scoping, store-and-forward and the offline PIN.
+
+Database migrations: `alembic upgrade head` (0001 initial schema, 0002 sync patient scope).
 
 ## 📊 Roles
 

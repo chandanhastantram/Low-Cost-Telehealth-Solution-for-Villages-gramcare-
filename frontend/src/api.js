@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+export const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 export const api = axios.create({ baseURL: `${API_URL}/api/v1` });
 
@@ -64,4 +64,22 @@ export function clearSession() {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
   localStorage.removeItem("user");
+  localStorage.removeItem("gc-pin");
+}
+
+export function updateStoredUser(patch) {
+  const current = getStoredUser() || {};
+  localStorage.setItem("user", JSON.stringify({ ...current, ...patch }));
+}
+
+export async function logout() {
+  const refresh = localStorage.getItem("refresh_token");
+  if (refresh) {
+    try {
+      await api.post("/auth/logout", { refresh_token: refresh });
+    } catch {
+      /* offline or already revoked — clearing locally is what matters */
+    }
+  }
+  clearSession();
 }

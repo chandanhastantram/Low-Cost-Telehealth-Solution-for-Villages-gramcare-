@@ -7,8 +7,6 @@ POST /api/v1/auth/logout         – revoke refresh token
 """
 
 import logging
-import random
-import string
 from datetime import datetime, timedelta, timezone
 
 import redis.exceptions as redis_exceptions
@@ -158,6 +156,9 @@ async def verify_otp(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    if not user.is_active:
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is deactivated.")
 
     # Issue tokens
     access_token = create_access_token(subject=str(user.id), role=user.role.value)
@@ -249,7 +250,7 @@ async def logout(
 
 # ── Dev-only instant login (OTP bypass) ────────────────────────────────────
 # Skips OTP entirely and logs straight into one of three canned demo
-# accounts. Only enabled while settings.DEBUG is true (never in prod — see
+# accounts. Only enabled while settings.DEBUG or DEMO_LOGIN_ENABLED is true (see
 # the 404 guard below) so this can't become an auth bypass in a real
 # deployment. Each role gets a fixed demo phone number; the account and its
 # role-specific profile (patient/doctor) are created on first use.
@@ -263,7 +264,7 @@ _DEV_DEMO_ACCOUNTS = {
 
 @router.post("/dev-login", response_model=TokenResponse)
 async def dev_login(role: UserRole, db: AsyncSession = Depends(get_db)):
-    if not settings.DEBUG:
+    if not (settings.DEBUG or settings.DEMO_LOGIN_ENABLED):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     if role not in _DEV_DEMO_ACCOUNTS:
         raise HTTPException(status_code=400, detail="No demo account for this role.")

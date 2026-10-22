@@ -15,37 +15,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import load_appointment_or_404
 from app.core.deps import CurrentUser, get_db
-from app.models.models import (
-    Appointment,
-    ChatMessage,
-    DoctorProfile,
-    PatientProfile,
-    UserRole,
-)
+from app.models.models import ChatMessage
 from app.schemas.schemas import ChatMessageResponse
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
-
-
-async def _assert_can_access(current_user, appointment: Appointment, db: AsyncSession) -> None:
-    if current_user.role == UserRole.admin:
-        return
-    if current_user.role == UserRole.chw and appointment.chw_id == current_user.id:
-        return
-    if current_user.role == UserRole.doctor:
-        doc = (
-            await db.execute(select(DoctorProfile).where(DoctorProfile.user_id == current_user.id))
-        ).scalar_one_or_none()
-        if doc and appointment.doctor_id == doc.id:
-            return
-    if current_user.role == UserRole.patient:
-        pat = (
-            await db.execute(select(PatientProfile).where(PatientProfile.user_id == current_user.id))
-        ).scalar_one_or_none()
-        if pat and appointment.patient_id == pat.id:
-            return
-    raise HTTPException(status_code=403, detail="Not authorized for this appointment's messages.")
 
 
 @router.get("/{appointment_id}", response_model=List[ChatMessageResponse])
@@ -56,12 +31,7 @@ async def get_message_history(
     limit: int = Query(200, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Appointment).where(Appointment.id == appointment_id))
-    appointment = result.scalar_one_or_none()
-    if not appointment:
-        raise HTTPException(status_code=404, detail="Appointment not found.")
-
-    await _assert_can_access(current_user, appointment, db)
+    await load_appointment_or_404(db, current_user, appointment_id)
 
     query = select(ChatMessage).where(ChatMessage.appointment_id == appointment_id)
     if since:

@@ -2,8 +2,12 @@
 GramCare – Admin & User management endpoints
 
 GET    /api/v1/users/me           – get current user profile
-PATCH  /api/v1/users/me           – update profile / language
-GET    /api/v1/users              – list users (admin)
+PATCH  /api/v1/users/me           – update name / language
+PUT    /api/v1/users/me/pin       – set offline unlock PIN
+POST   /api/v1/users/me/pin/verify – check offline PIN (rate limited)
+DELETE /api/v1/users/me/pin       – remove offline PIN
+GET    /api/v1/users              – list users (staff)
+PATCH  /api/v1/users/{id}         – change role / facility / status (admin)
 POST   /api/v1/facilities         – create facility (admin)
 GET    /api/v1/facilities         – list facilities
 GET    /api/v1/audit-logs         – view audit logs (admin)
@@ -16,9 +20,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import AdminOnly, CHWOrAbove, CurrentUser, get_db
+import redis.exceptions as redis_exceptions
+
+from app.core.deps import AdminOnly, CHWOrAbove, CurrentUser, get_db, get_redis
+from app.core.security import hash_secret, verify_secret
 from app.models.models import AuditLog, CHWProfile, DoctorProfile, Facility, User, UserRole
 from app.schemas.schemas import (
+    AdminUserUpdate,
+    OKResponse,
+    PinSetRequest,
+    PinVerifyRequest,
+    PinVerifyResponse,
     CHWProfileCreate,
     CHWProfileResponse,
     DoctorProfileCreate,
@@ -54,6 +66,72 @@ async def update_me(
     return current_user
 
 
+# ── Offline PIN ───────────────────────────────────────────────────────────────
+# The device keeps its own salted hash of the PIN so the app can be unlocked
+# with no network (paper §9, lost/stolen device). The server copy lets a
+# replacement device re-verify the PIN and caps guessing to PIN_MAX_ATTEMPTS
+# per window; after that the user must log in again with an OTP.
+
+PIN_MAX_ATTEMPTS = 5
+PIN_LOCK_SECONDS = 15 * 60
+
+
+@router.put("/users/me/pin", response_model=OKResponse)
+async def set_offline_pin(
+    body: PinSetRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    current_user.device_pin_hash = hash_secret(body.pin)
+    await log_action(db, current_user.id, "update", "user_pin", str(current_user.id))
+    await db.commit()
+    return OKResponse(message="Offline PIN set.")
+
+
+@router.delete("/users/me/pin", response_model=OKResponse)
+async def clear_offline_pin(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    current_user.device_pin_hash = None
+    await log_action(db, current_user.id, "delete", "user_pin", str(current_user.id))
+    await db.commit()
+    return OKResponse(message="Offline PIN removed.")
+
+
+@router.post("/users/me/pin/verify", response_model=PinVerifyResponse)
+async def verify_offline_pin(
+    body: PinVerifyRequest,
+    current_user: CurrentUser,
+    redis=Depends(get_redis),
+):
+    if not current_user.device_pin_hash:
+        raise HTTPException(status_code=404, detail="No offline PIN set.")
+
+    key = f"pin_fail:{current_user.id}"
+    try:
+        failures = int(await redis.get(key) or 0)
+    except redis_exceptions.RedisError:
+        failures = 0  # Redis is best-effort on a single-VM deployment
+    if failures >= PIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many wrong PINs. Log in again with OTP.")
+
+    if verify_secret(body.pin, current_user.device_pin_hash):
+        try:
+            await redis.delete(key)
+        except redis_exceptions.RedisError:
+            pass
+        return PinVerifyResponse(valid=True, attempts_remaining=PIN_MAX_ATTEMPTS)
+
+    try:
+        failures = await redis.incr(key)
+        if failures == 1:
+            await redis.expire(key, PIN_LOCK_SECONDS)
+    except redis_exceptions.RedisError:
+        failures += 1
+    return PinVerifyResponse(valid=False, attempts_remaining=max(PIN_MAX_ATTEMPTS - failures, 0))
+
+
 # ── Staff directory ────────────────────────────────────────────────────────
 # CHW/doctor/admin (not patients) can look users up by phone — this is how a
 # CHW finds the user record for a patient they just onboarded via OTP
@@ -85,6 +163,31 @@ async def list_users(
         total=total, page=page, per_page=per_page,
         items=[UserResponse.model_validate(u) for u in items],
     )
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def admin_update_user(
+    user_id: uuid.UUID,
+    body: AdminUserUpdate,
+    current_user: AdminOnly,
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: assign a facility, change role, or (de)activate a user."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if body.facility_id and not await db.get(Facility, body.facility_id):
+        raise HTTPException(status_code=404, detail="Facility not found.")
+    changes = body.model_dump(exclude_none=True)
+    for field, value in changes.items():
+        setattr(user, field, value)
+    await log_action(
+        db, current_user.id, "update", "user", str(user_id),
+        {k: str(getattr(v, "value", v)) for k, v in changes.items()},
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 @router.patch("/users/{user_id}/deactivate")
@@ -170,8 +273,12 @@ async def onboard_chw(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="CHW profile already exists for this user.")
 
+    if body.facility_id:
+        if not await db.get(Facility, body.facility_id):
+            raise HTTPException(status_code=404, detail="Facility not found.")
+        user.facility_id = body.facility_id
     user.role = UserRole.chw
-    profile = CHWProfile(**body.model_dump())
+    profile = CHWProfile(**body.model_dump(exclude={"facility_id"}))
     db.add(profile)
     await db.commit()
     await db.refresh(profile)

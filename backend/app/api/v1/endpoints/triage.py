@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CHWOrAbove, get_db
 from app.models.models import TriageRule
-from app.schemas.schemas import TriageEvalRequest, TriageEvalResponse, TriageFlag
+from app.schemas.schemas import TriageEvalRequest, TriageEvalResponse, TriageFlag, VitalsSchema
 
 router = APIRouter(prefix="/triage", tags=["Triage"])
 
@@ -92,15 +92,18 @@ BUILT_IN_RULES = [
 async def evaluate_triage(
     body: TriageEvalRequest,
     current_user: CHWOrAbove,
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Evaluate symptoms and vitals against built-in red-flag rules.
     Returns a list of triggered flags with severity and advice.
     """
+    return run_triage(body.symptoms, body.vitals)
+
+
+def run_triage(symptoms: dict | None, vitals: VitalsSchema | None) -> TriageEvalResponse:
+    """Pure rule evaluation — also used to auto-flag encounters on save."""
     flags: list[TriageFlag] = []
-    symptoms = body.symptoms or {}
-    vitals = body.vitals
+    symptoms = symptoms or {}
 
     for rule in BUILT_IN_RULES:
         try:
